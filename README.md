@@ -1,4 +1,4 @@
-# 🚀 IPO GMP Scraper - World-Class Edition
+# 🚀 IPO GMP Scraper
 
 [![GitHub Actions](https://github.com/PratLegacy/ipo-gmp-alerter/workflows/Daily%20IPO%20Check/badge.svg)](https://github.com/PratLegacy/ipo-gmp-alerter/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -6,8 +6,6 @@
 [![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen.svg)](https://github.com/PratLegacy/ipo-gmp-alerter/actions)
 
 A **production-ready, enterprise-grade** scraper for IPO Grey Market Premium (GMP) data with automated Telegram notifications. Built with Python, Playwright, and GitHub Actions for maximum reliability, performance, and maintainability.
-
-## ✨ **World-Class Features**
 
 ### 🚀 **Performance & Reliability**
 - ⚡ **Lightning Fast**: 2-3 second execution time
