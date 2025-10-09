@@ -1,9 +1,9 @@
 # 🚀 IPO GMP Scraper - World-Class Edition
 
-[![GitHub Actions](https://github.com/PratLegacy/ipo-gmp-scraper/workflows/Daily%20IPO%20Check/badge.svg)](https://github.com/PratLegacy/ipo-gmp-scraper/actions)
+[![GitHub Actions](https://github.com/PratLegacy/ipo-gmp-alerter/workflows/Daily%20IPO%20Check/badge.svg)](https://github.com/PratLegacy/ipo-gmp-alerter/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen.svg)](https://github.com/PratLegacy/ipo-gmp-scraper/actions)
+[![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen.svg)](https://github.com/PratLegacy/ipo-gmp-alerter/actions)
 
 A **production-ready, enterprise-grade** scraper for IPO Grey Market Premium (GMP) data with automated Telegram notifications. Built with Python, Playwright, and GitHub Actions for maximum reliability, performance, and maintainability.
 
@@ -39,8 +39,8 @@ A **production-ready, enterprise-grade** scraper for IPO Grey Market Premium (GM
 
 ### **1. Clone the Repository**
 ```bash
-git clone https://github.com/PratLegacy/ipo-gmp-scraper.git
-cd ipo-gmp-scraper
+git clone https://github.com/PratLegacy/ipo-gmp-alerter.git
+cd ipo-gmp-alerter
 ```
 
 ### **2. Set Up Telegram Bot**
@@ -140,7 +140,7 @@ schedule:
 ## 📁 **Project Structure**
 
 ```
-ipo-gmp-scraper/
+ipo-gmp-alerter/
 ├── 📄 Core Files
 │   ├── ipo_gmp_scraper.py          # Main scraper (311 lines)
 │   ├── requirements.txt             # Dependencies
@@ -272,8 +272,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 **Support**
 
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/PratLegacy/ipo-gmp-scraper/issues)
-- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/PratLegacy/ipo-gmp-scraper/discussions)
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/PratLegacy/ipo-gmp-alerter/issues)
+- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/PratLegacy/ipo-gmp-alerter/discussions)
 - 📧 **Contact**: [Your Email](mailto:your.email@example.com)
 
 ## ⚠️ **Disclaimer**
