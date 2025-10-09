@@ -2,7 +2,7 @@ name: Daily IPO Check
 
 on:
   schedule:
-    - cron: '17 12 * * *'  # 5:47 PM IST (12:17 PM UTC) - TEST SCHEDULE
+    - cron: '25 12 * * *'  # 5:55 PM IST (12:25 PM UTC) - TEST SCHEDULE
   workflow_dispatch:  # Manual trigger
 
 jobs:
