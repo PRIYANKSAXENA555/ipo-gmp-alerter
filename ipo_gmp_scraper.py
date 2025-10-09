@@ -128,10 +128,14 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
     
+    # Get current date
+    from datetime import datetime
+    current_date = datetime.now().strftime("%B %d, %Y")
+    
     if df.empty:
-        message = "📊 No IPO opportunities found today."
+        message = f"📊 No IPO opportunities found today ({current_date})."
     else:
-        message = "🚀 <b>Daily IPO Opportunities Found!</b>\n\n"
+        message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
             message += f"📈 <b>{row['Stock / IPO']}</b>\n"
             message += f"💰 GMP: {row['IPO GMP']}\n"
