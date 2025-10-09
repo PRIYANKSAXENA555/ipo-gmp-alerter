@@ -1,7 +1,8 @@
-name: Manual IPO Check
+name: Scheduled IPO Check
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  schedule:
+    - cron: '30 12 * * *'  # 6:00 PM IST (12:30 PM UTC) - TEST SCHEDULE
 
 jobs:
   check-ipos:

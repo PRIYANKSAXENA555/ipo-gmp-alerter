@@ -1,7 +1,9 @@
-name: Manual IPO Check
+name: Webhook Triggered IPO Check
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  repository_dispatch:
+    types: [run-ipo-check]
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   check-ipos:
