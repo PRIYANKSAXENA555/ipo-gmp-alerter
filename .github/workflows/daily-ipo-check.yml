@@ -2,7 +2,7 @@ name: Daily IPO Check
 
 on:
   schedule:
-    - cron: '15 9 * * *'  # 9:15 AM daily (UTC)
+    - cron: '15 3 * * *'  # 9:15 AM daily (IST)
   workflow_dispatch:  # Manual trigger
 
 jobs:
