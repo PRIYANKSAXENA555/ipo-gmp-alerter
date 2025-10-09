@@ -11,7 +11,6 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
 
 jobs:
   check-ipos:
@@ -31,7 +30,7 @@ jobs:
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
-          path: /ms-playwright
+          path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             playwright-${{ runner.os }}-
