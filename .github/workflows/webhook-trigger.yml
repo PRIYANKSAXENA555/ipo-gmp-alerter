@@ -1,4 +1,4 @@
-name: Webhook Triggered IPO Check
+name: External Cron Triggered IPO Check
 
 on:
   repository_dispatch:
