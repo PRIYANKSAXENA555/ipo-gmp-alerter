@@ -29,7 +29,7 @@ jobs:
           cache: 'pip'
       
       - name: Cache Playwright browsers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
@@ -52,7 +52,7 @@ jobs:
       
       - name: Upload results as artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ipo-results-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
@@ -63,7 +63,7 @@ jobs:
       
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: error-logs-${{ github.run_number }}
           path: ipo_scraper.log
