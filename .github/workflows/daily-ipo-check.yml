@@ -4,18 +4,11 @@ on:
   schedule:
     - cron: '15 9 * * *'  # 9:15 AM daily (UTC)
   workflow_dispatch:  # Manual trigger
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
-env:
-  PYTHON_VERSION: '3.11'
 
 jobs:
   check-ipos:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     
     steps:
       - name: Checkout code
@@ -24,22 +17,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: '3.11'
           cache: 'pip'
-      
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
       
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          npx playwright install --with-deps chromium
+          playwright install chromium
       
       - name: Run IPO scraper
         env:
@@ -47,23 +31,3 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python ipo_gmp_scraper.py
-        continue-on-error: false
-      
-      - name: Upload results as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ipo-results-${{ github.run_number }}-${{ github.run_attempt }}
-          path: |
-            ipo_gmp_data_*.csv
-            ipo_gmp_data_*.json
-            ipo_scraper.log
-          retention-days: 30
-      
-      - name: Upload logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-logs-${{ github.run_number }}
-          path: ipo_scraper.log
-          retention-days: 7
