@@ -56,7 +56,7 @@ jobs:
       
       - name: 📦 Install quality tools
         run: |
-          pip install black flake8 mypy
+          pip install -r requirements.txt
       
       - name: 🎨 Check code formatting (Black)
         run: black --check --diff .
