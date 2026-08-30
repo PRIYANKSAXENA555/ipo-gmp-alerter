@@ -2,7 +2,8 @@ name: Scheduled IPO Check
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 6:03 PM IST (21:33 PM UTC) - TEST SCHEDULE
+    - cron: '0 2 * * *' # Runs at 02:00 AM # 6:03 PM IST (21:33 PM UTC) - TEST SCHEDULE
+  workflow_dispatch:
 
 jobs:
   check-ipos:
