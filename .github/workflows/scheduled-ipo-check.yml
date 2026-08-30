@@ -2,7 +2,7 @@ name: Scheduled IPO Check
 
 on:
   schedule:
-       - cron: '0 2 * * *' # 6:03 PM IST (21:33 PM UTC) - TEST SCHEDULE
+    - cron: '0 2 * * *' # 6:03 PM IST (21:33 PM UTC) - TEST SCHEDULE
 
 jobs:
   check-ipos:
