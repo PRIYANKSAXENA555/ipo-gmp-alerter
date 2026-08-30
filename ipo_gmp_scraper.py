@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-MIN_GAIN_PERCENTAGE = 5.0
+MIN_GAIN_PERCENTAGE = 20.0
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2
