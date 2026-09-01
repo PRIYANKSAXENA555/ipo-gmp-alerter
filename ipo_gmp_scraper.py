@@ -105,7 +105,19 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # Filter for Mainboard IPOs only
-    mainboard_df = df[df["Type"] == "Mainboard"].copy()
+    # Note: Using a safer lookup in case 'Type' is not exactly named 'Type'
+    type_col = None
+    for col in df.columns:
+        if 'type' in col.lower():
+            type_col = col
+            break
+            
+    if type_col:
+        mainboard_df = df[df[type_col] == "Mainboard"].copy()
+    else:
+        logger.warning("Could not find 'Type' column. Assuming all are Mainboard.")
+        mainboard_df = df.copy()
+
     if mainboard_df.empty:
         return mainboard_df
 
@@ -114,8 +126,13 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
 
     for idx, row in mainboard_df.iterrows():
         try:
-            date_str = row.get("Date", "")
-            gain_str = row.get("Gain", "")
+            # Safer column lookup
+            date_str = ""
+            gain_str = ""
+            if "Date" in row:
+                date_str = row["Date"]
+            if "Gain" in row:
+                gain_str = row["Gain"]
 
             gain_percentage = parse_gain_percentage(gain_str)
             end_date = parse_date_range(date_str)
@@ -157,11 +174,18 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            message += f"📈 <b>{row['Stock / IPO']}</b>\n"
-            message += f"💰 GMP: {row['IPO GMP']}\n"
-            message += f"💵 Price: {row['IPO Price']}\n"
-            message += f"📊 Gain: {row['Gain']}\n"
-            message += f"📅 Date: {row['Date']}\n\n"
+            # Safe access for potential column name variations
+            stock_name = row.get('Stock / IPO', row.get('Stock', 'Unknown'))
+            gmp = row.get('IPO GMP', row.get('GMP', 'N/A'))
+            price = row.get('IPO Price', row.get('Price', 'N/A'))
+            gain = row.get('Gain', 'N/A')
+            date = row.get('Date', 'N/A')
+
+            message += f"📈 <b>{stock_name}</b>\n"
+            message += f"💰 GMP: {gmp}\n"
+            message += f"💵 Price: {price}\n"
+            message += f"📊 Gain: {gain}\n"
+            message += f"📅 Date: {date}\n\n"
 
     if len(message) > 4000:
         message = message[:3900] + "\n\n... (truncated)"
@@ -261,7 +285,23 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
             # Convert to DataFrame
             headers = table_data[0]
             rows = table_data[1:]
-            df = pd.DataFrame(rows, columns=headers)
+            
+            # CLEAN THE HEADERS: Strip whitespace, remove empty strings, and rename duplicates
+            clean_headers = []
+            seen_headers = {}
+            for i, h in enumerate(headers):
+                h = h.strip()  # Remove spaces
+                if not h:  # If header is empty, give it a default name
+                    h = f"Column_{i}"
+                # Handle duplicate columns (e.g., if there are two "Type")
+                if h in seen_headers:
+                    seen_headers[h] += 1
+                    h = f"{h}_{seen_headers[h]}"
+                else:
+                    seen_headers[h] = 0
+                clean_headers.append(h)
+
+            df = pd.DataFrame(rows, columns=clean_headers)
 
             # Filter for open Mainboard IPOs
             filtered_df = filter_open_mainboard_ipos(df)
@@ -276,9 +316,6 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
     except Exception as e:
         logger.error(f"Error occurred during scraping: {e}")
-        # Optionally uncomment the line below if you want full traceback details
-        # import traceback
-        # logger.error(traceback.format_exc())
         return None
     finally:
         if browser:
