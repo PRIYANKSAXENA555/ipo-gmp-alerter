@@ -7,7 +7,6 @@ A robust, production-ready scraper for IPO Grey Market Premium data.
 Optimized for reliability and performance.
 """
 
-import traceback
 import asyncio
 import pandas as pd
 from playwright.async_api import (
@@ -274,10 +273,14 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 logger.info(filtered_df.to_string(index=False))
 
             return filtered_df
-            
-except Exception as e:
-    logging.error(f"Error occurred during scraping: {e}")
-    logging.error(traceback.format_exc())
+                try:
+        # ... Your code that is trying to scrape ...
+        # ... 
+
+    except Exception as e:
+        logging.error(f"Error occurred during scraping: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         return None
     finally:
         if browser:
