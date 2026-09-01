@@ -277,7 +277,7 @@ try:
         # ... Your code that is trying to scrape ...
         # ... 
 
-    except Exception as e:
+except Exception as e:
         logging.error(f"Error occurred during scraping: {e}")
         import traceback
         logging.error(traceback.format_exc())
