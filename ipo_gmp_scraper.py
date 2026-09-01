@@ -273,9 +273,10 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 logger.info(filtered_df.to_string(index=False))
 
             return filtered_df
-
-    except Exception as e:
-        logger.error(f"Error occurred during scraping: {e}")
+import traceback
+except Exception as e:
+    logging.error(f"Error occurred during scraping: {e}")
+    logging.error(traceback.format_exc())
         return None
     finally:
         if browser:
