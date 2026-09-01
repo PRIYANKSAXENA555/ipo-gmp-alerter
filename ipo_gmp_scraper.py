@@ -249,7 +249,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                     
                     return data;
                 }
-            """
+                """
             )
 
             if not table_data or len(table_data) <= 1:
@@ -273,14 +273,12 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 logger.info(filtered_df.to_string(index=False))
 
             return filtered_df
-try:
-        # ... Your code that is trying to scrape ...
-        # ... 
 
-except Exception as e:
-        logging.error(f"Error occurred during scraping: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Error occurred during scraping: {e}")
+        # Optionally uncomment the line below if you want full traceback details
+        # import traceback
+        # logger.error(traceback.format_exc())
         return None
     finally:
         if browser:
