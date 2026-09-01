@@ -273,7 +273,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 logger.info(filtered_df.to_string(index=False))
 
             return filtered_df
-                try:
+try:
         # ... Your code that is trying to scrape ...
         # ... 
 
