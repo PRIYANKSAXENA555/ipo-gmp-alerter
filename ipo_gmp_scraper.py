@@ -36,7 +36,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-MIN_GAIN_PERCENTAGE = 20.0
+# Set to 0.0 for testing so we get all IPOs. Change this back to 20.0 later if you want.
+MIN_GAIN_PERCENTAGE = 0.0 
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2
@@ -136,7 +137,10 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
 
             gain_percentage = parse_gain_percentage(gain_str)
             end_date = parse_date_range(date_str)
-            is_open = (end_date and end_date.date() >= today) or not end_date
+            
+            # TEMPORARILY SET TO TRUE FOR TESTING
+            is_open = True 
+            
             has_good_gain = gain_percentage >= MIN_GAIN_PERCENTAGE
 
             if is_open and has_good_gain:
@@ -302,6 +306,11 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 clean_headers.append(h)
 
             df = pd.DataFrame(rows, columns=clean_headers)
+
+            # ADDED DEBUG LOG TO SEE EXACT COLUMNS AND DATA
+            logger.info(f"DEBUG - COLUMNS FOUND: {list(df.columns)}")
+            if not df.empty:
+                logger.info(f"DEBUG - FIRST ROW DATA: {df.iloc[0].to_dict()}")
 
             # Filter for open Mainboard IPOs
             filtered_df = filter_open_mainboard_ipos(df)
