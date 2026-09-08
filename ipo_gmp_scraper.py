@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-# Set to 0.0 for testing so we get all IPOs. Change this back to 20.0 later if you want.
+# Set to 20.0 if you want to only get alerts for IPOs with 20%+ gains
 MIN_GAIN_PERCENTAGE = 0.0 
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
@@ -59,18 +59,8 @@ def parse_date_range(date_str: str) -> Optional[datetime]:
         month_str = date_match.group(3)
 
         month_map = {
-            "Jan": 1,
-            "Feb": 2,
-            "Mar": 3,
-            "Apr": 4,
-            "May": 5,
-            "Jun": 6,
-            "Jul": 7,
-            "Aug": 8,
-            "Sep": 9,
-            "Oct": 10,
-            "Nov": 11,
-            "Dec": 12,
+            "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+            "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
         }
 
         month = month_map.get(month_str)
@@ -78,7 +68,11 @@ def parse_date_range(date_str: str) -> Optional[datetime]:
             return None
 
         current_year = datetime.now().year
+        # Handle potential year overflow (e.g., Dec dates viewed in Jan)
         end_date = datetime(current_year, month, end_day)
+        if end_date.date() < datetime.now().date() - timedelta(days=30):
+             end_date = datetime(current_year + 1, month, end_day)
+             
         return end_date
 
     except Exception:
@@ -90,10 +84,19 @@ def parse_gain_percentage(gain_str: str) -> float:
     if not gain_str or gain_str.strip() in ("-", "-%", ""):
         return 0.0
 
+    # Handle the case where the Trend column contains something like '₹225' or '10%'
     try:
+        # First check for a percentage
         gain_match = re.search(r"(\d+\.?\d*)%", gain_str.strip())
         if gain_match:
             return float(gain_match.group(1))
+        
+        # If no percentage, extract the number (e.g., from '₹225')
+        # This is a fallback to treat the GMP amount as a metric
+        num_match = re.search(r"(\d+\.?\d*)", gain_str.strip())
+        if num_match:
+            return float(num_match.group(1))
+            
     except Exception:
         pass
 
@@ -105,18 +108,18 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Filter for Mainboard IPOs only
-    # Note: Using a safer lookup in case 'Type' is not exactly named 'Type'
-    type_col = None
+    # The website uses 'Status' instead of 'Type'. Check for 'Upcoming' or 'Open'
+    status_col = None
     for col in df.columns:
-        if 'type' in col.lower():
-            type_col = col
+        if 'status' in col.lower():
+            status_col = col
             break
             
-    if type_col:
-        mainboard_df = df[df[type_col] == "Mainboard"].copy()
+    if status_col:
+        # Filter for IPOs that are either Upcoming or Open, excluding 'Listed' or 'Closed'
+        mainboard_df = df[~df[status_col].str.contains('Listed|Closed', case=False, na=False)].copy()
     else:
-        logger.warning("Could not find 'Type' column. Assuming all are Mainboard.")
+        logger.warning("Could not find 'Status' column. Assuming all are active.")
         mainboard_df = df.copy()
 
     if mainboard_df.empty:
@@ -127,20 +130,18 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
 
     for idx, row in mainboard_df.iterrows():
         try:
-            # Safer column lookup
+            # Safer column lookup based on actual headers found
             date_str = ""
-            gain_str = ""
+            trend_str = ""
             if "Date" in row:
                 date_str = row["Date"]
-            if "Gain" in row:
-                gain_str = row["Gain"]
+            if "Trend" in row:
+                trend_str = row["Trend"]
 
-            gain_percentage = parse_gain_percentage(gain_str)
+            gain_percentage = parse_gain_percentage(trend_str)
             end_date = parse_date_range(date_str)
-            
-            # TEMPORARILY SET TO TRUE FOR TESTING
-            is_open = True 
-            
+            # Treat IPOs as open if the date hasn't passed or if we can't parse the date
+            is_open = (end_date and end_date.date() >= today) or not end_date
             has_good_gain = gain_percentage >= MIN_GAIN_PERCENTAGE
 
             if is_open and has_good_gain:
@@ -150,14 +151,14 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
 
     if open_ipos:
         filtered_df = pd.DataFrame(open_ipos)
-        filtered_df["Gain_Numeric"] = filtered_df["Gain"].apply(parse_gain_percentage)
+        filtered_df["Gain_Numeric"] = filtered_df["Trend"].apply(parse_gain_percentage)
         filtered_df = filtered_df.sort_values("Gain_Numeric", ascending=False)
         filtered_df = filtered_df.drop("Gain_Numeric", axis=1)
         logger.info(
-            f"Found {len(filtered_df)} currently open Mainboard IPOs with >=5% gains"
+            f"Found {len(filtered_df)} currently open IPOs with >= {MIN_GAIN_PERCENTAGE}% gains"
         )
     else:
-        logger.info("No currently open Mainboard IPOs with >=5% gains found")
+        logger.info("No currently open IPOs matching criteria found")
         filtered_df = pd.DataFrame()
 
     return filtered_df
@@ -168,9 +169,6 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
 
-    # Get current date
-    from datetime import datetime
-
     current_date = datetime.now().strftime("%B %d, %Y")
 
     if df.empty:
@@ -178,18 +176,20 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            # Safe access for potential column name variations
-            stock_name = row.get('Stock / IPO', row.get('Stock', 'Unknown'))
-            gmp = row.get('IPO GMP', row.get('GMP', 'N/A'))
-            price = row.get('IPO Price', row.get('Price', 'N/A'))
-            gain = row.get('Gain', 'N/A')
+            # Use the EXACT column names found in the DEBUG log
+            stock_name = row.get('IPO Name', 'Unknown')
+            gmp = row.get('IPO GMP', 'N/A')
+            price = row.get('Price Band', 'N/A')
+            trend = row.get('Trend', 'N/A')
             date = row.get('Date', 'N/A')
+            status = row.get('Status', 'N/A')
 
             message += f"📈 <b>{stock_name}</b>\n"
             message += f"💰 GMP: {gmp}\n"
-            message += f"💵 Price: {price}\n"
-            message += f"📊 Gain: {gain}\n"
-            message += f"📅 Date: {date}\n\n"
+            message += f"💵 Price Band: {price}\n"
+            message += f"📊 Trend: {trend}\n"
+            message += f"📅 Date: {date}\n"
+            message += f"📌 Status: {status}\n\n"
 
     if len(message) > 4000:
         message = message[:3900] + "\n\n... (truncated)"
@@ -290,14 +290,12 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
             headers = table_data[0]
             rows = table_data[1:]
             
-            # CLEAN THE HEADERS: Strip whitespace, remove empty strings, and rename duplicates
             clean_headers = []
             seen_headers = {}
             for i, h in enumerate(headers):
-                h = h.strip()  # Remove spaces
-                if not h:  # If header is empty, give it a default name
+                h = h.strip()
+                if not h:
                     h = f"Column_{i}"
-                # Handle duplicate columns (e.g., if there are two "Type")
                 if h in seen_headers:
                     seen_headers[h] += 1
                     h = f"{h}_{seen_headers[h]}"
@@ -307,17 +305,12 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             df = pd.DataFrame(rows, columns=clean_headers)
 
-            # ADDED DEBUG LOG TO SEE EXACT COLUMNS AND DATA
-            logger.info(f"DEBUG - COLUMNS FOUND: {list(df.columns)}")
-            if not df.empty:
-                logger.info(f"DEBUG - FIRST ROW DATA: {df.iloc[0].to_dict()}")
-
-            # Filter for open Mainboard IPOs
+            # Filter for open IPOs
             filtered_df = filter_open_mainboard_ipos(df)
 
             if not filtered_df.empty:
                 logger.info("\n" + "=" * 80)
-                logger.info("CURRENTLY OPEN MAINBOARD IPOs WITH >=5% GAINS")
+                logger.info("CURRENTLY OPEN IPOs MATCHING CRITERIA")
                 logger.info("=" * 80)
                 logger.info(filtered_df.to_string(index=False))
 
@@ -346,20 +339,6 @@ async def main():
 
         if df is not None and not df.empty:
             logger.info(f"Successfully scraped {len(df)} IPO records")
-
-            # Save data
-            try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                csv_file = f"ipo_gmp_data_{timestamp}.csv"
-                json_file = f"ipo_gmp_data_{timestamp}.json"
-
-                df.to_csv(csv_file, index=False)
-                df.to_json(json_file, orient="records", indent=2)
-
-                logger.info(f"Data saved to: {csv_file}")
-                logger.info(f"Data also saved to: {json_file}")
-            except Exception as e:
-                logger.error(f"Error saving data: {e}")
 
             # Send Telegram notification
             bot_token = os.getenv("BOT_TOKEN")
