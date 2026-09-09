@@ -125,20 +125,18 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            # Use the EXACT column names from the logs
             stock_name = row.get('IPO Name', 'Unknown')
             
-            # CRITICAL FIX: Look for the exact column 'IPO GMP'. 
-            # If it is empty or N/A, fall back to 'GMP' or 'N/A'.
+            # CRITICAL: Look for the exact 'IPO GMP' column
             gmp = row.get('IPO GMP', 'N/A')
-            if not gmp or gmp == 'N/A' or str(gmp).strip() == '':
-                gmp = row.get('GMP', 'N/A')
             
-            # If the GMP column is just a color (like '🟢'), try to get the numeric value from the row
-            # based on the raw HTML text if needed.
-            if str(gmp) in ['🟢', '🟡', '🔴', 'N/A']:
-                # Let's try to get the full string from the 'IPO GMP' column if it has hidden text
-                gmp = row.get('IPO GMP', row.get('Trend', 'N/A'))
+            # If the value is a color or N/A, it means the color was scraped. 
+            # We must replace it with the actual value from the HTML.
+            if str(gmp) in ['🟢', '🟡', '🔴', 'N/A', '']:
+                # Get the second-to-last column (Price Band usually holds the value)
+                # But actually, let's look for the exact raw HTML value
+                # (We will handle this in the scraper function directly)
+                gmp = "N/A" # Will be replaced by the scraper below
 
             price = row.get('Price Band', 'N/A')
             trend = row.get('Trend', 'N/A')
@@ -177,6 +175,7 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
 
     return False
 
+
 async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
     """Scrape IPO GMP data from the website."""
     browser = None
@@ -203,7 +202,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             logger.info("Extracting table data...")
 
-            # Extract table data - ADVANCED EXTRACTION
+            # Extract table data - FINAL FIX: Grab full HTML to find hidden amounts
             table_data = await page.evaluate(
                 """
                 () => {
@@ -221,26 +220,22 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                         for (let j = 0; j < cells.length; j++) {
                             const cell = cells[j];
                             
-                            // Method 1: Look for a specific hidden span with the data
-                            const hiddenData = cell.querySelector('.gmp-value, .value, .amount');
-                            if (hiddenData) {
-                                rowData.push(hiddenData.textContent.trim());
-                                continue; // Skip the rest of this cell
-                            }
+                            // CRITICAL: Grab the raw HTML to see the hidden image alt text
+                            let text = cell.getAttribute('innerHTML') || cell.innerHTML;
                             
-                            // Method 2: Use innerText (which grabs visible text only)
-                            let text = cell.innerText.trim();
+                            // Remove HTML tags and get the base text
+                            text = text.replace(/<[^>]*>/g, ' ');
+                            text = text.replace(/&nbsp;/g, ' ');
+                            text = text.trim();
                             
-                            // Method 3: If the cell contains an image, use the alt text
+                            // If the cell is just a color image, extract the alt text
                             const img = cell.querySelector('img');
-                            if (img && img.alt) {
-                                text = img.alt;
-                            }
-                            
-                            // Method 4: If it's a link, grab the link text
-                            const link = cell.querySelector('a');
-                            if (link && link.textContent.trim()) {
-                                text = link.textContent.trim();
+                            if (img) {
+                                // Check if the image alt text contains a number or ₹
+                                let altText = img.getAttribute('alt') || '';
+                                if (altText && (altText.includes('₹') || altText.includes('%') || altText.includes('+'))) {
+                                    text = altText;
+                                }
                             }
                             
                             rowData.push(text);
@@ -281,9 +276,9 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             df = pd.DataFrame(rows, columns=clean_headers)
             
-            # Print the FIRST ROW to see if we got the money value
+            # Log what we got
+            logger.info(f"DEBUG - COLUMN NAMES: {list(df.columns)}")
             if not df.empty:
-                logger.info(f"DEBUG - COLUMN NAMES: {list(df.columns)}")
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
             # Filter for open IPOs
