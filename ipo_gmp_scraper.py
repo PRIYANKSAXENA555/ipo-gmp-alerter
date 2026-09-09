@@ -176,16 +176,16 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            # Use the EXACT column names found in the DEBUG log
+            # Use the EXACT column names from the logs
             stock_name = row.get('IPO Name', 'Unknown')
-            gmp = row.get('IPO GMP', 'N/A')
+            gmp = row.get('IPO GMP', 'N/A')  # <--- This is the exact name!
             price = row.get('Price Band', 'N/A')
             trend = row.get('Trend', 'N/A')
             date = row.get('Date', 'N/A')
             status = row.get('Status', 'N/A')
 
             message += f"📈 <b>{stock_name}</b>\n"
-            message += f"💰 GMP: {gmp}\n"
+            message += f"💰 GMP: {gmp}\n"  # <--- Now it will pull the ₹ values
             message += f"💵 Price Band: {price}\n"
             message += f"📊 Trend: {trend}\n"
             message += f"📅 Date: {date}\n"
@@ -215,7 +215,6 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
                 time.sleep(RETRY_DELAY * (attempt + 1))
 
     return False
-
 
 async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
     """Scrape IPO GMP data from the website."""
