@@ -36,8 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-# Set to 20.0 if you want to only get alerts for IPOs with 20%+ gains
-MIN_GAIN_PERCENTAGE = 0.0 
+MIN_GAIN_PERCENTAGE = 0.0
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2
@@ -45,70 +44,24 @@ TELEGRAM_API_URL = "https://api.telegram.org/bot{}/sendMessage"
 WEBSITE_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
 
 
-def parse_date_range(date_str: str) -> Optional[datetime]:
-    """Parse date range string like '3-7 Oct' and return the end date."""
-    if not date_str or date_str.strip() in ("TBA", "-", ""):
-        return None
-
-    try:
-        date_match = re.search(r"(\d+)-(\d+)\s+(\w+)", date_str.strip())
-        if not date_match:
-            return None
-
-        end_day = int(date_match.group(2))
-        month_str = date_match.group(3)
-
-        month_map = {
-            "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
-            "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
-        }
-
-        month = month_map.get(month_str)
-        if not month:
-            return None
-
-        current_year = datetime.now().year
-        # Handle potential year overflow (e.g., Dec dates viewed in Jan)
-        end_date = datetime(current_year, month, end_day)
-        if end_date.date() < datetime.now().date() - timedelta(days=30):
-             end_date = datetime(current_year + 1, month, end_day)
-             
-        return end_date
-
-    except Exception:
-        return None
-
-
 def parse_gain_percentage(gain_str: str) -> float:
     """Parse gain percentage from string like '26.31%'."""
     if not gain_str or gain_str.strip() in ("-", "-%", ""):
         return 0.0
-
-    # Handle the case where the Trend column contains something like '₹225' or '10%'
     try:
-        # First check for a percentage
         gain_match = re.search(r"(\d+\.?\d*)%", gain_str.strip())
         if gain_match:
             return float(gain_match.group(1))
-        
-        # If no percentage, extract the number (e.g., from '₹225')
-        # This is a fallback to treat the GMP amount as a metric
-        num_match = re.search(r"(\d+\.?\d*)", gain_str.strip())
-        if num_match:
-            return float(num_match.group(1))
-            
     except Exception:
         pass
-
     return 0.0
 
 
 def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter for Mainboard IPOs with >=5% gains that are currently open."""
+    """Filter for IPOs that are currently open."""
     if df.empty:
         return df
 
-    # The website uses 'Status' instead of 'Type'. Check for 'Upcoming' or 'Open'
     status_col = None
     for col in df.columns:
         if 'status' in col.lower():
@@ -116,7 +69,6 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
             break
             
     if status_col:
-        # Filter for IPOs that are either Upcoming or Open, excluding 'Listed' or 'Closed'
         mainboard_df = df[~df[status_col].str.contains('Listed|Closed', case=False, na=False)].copy()
     else:
         logger.warning("Could not find 'Status' column. Assuming all are active.")
@@ -130,7 +82,6 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
 
     for idx, row in mainboard_df.iterrows():
         try:
-            # Safer column lookup based on actual headers found
             date_str = ""
             trend_str = ""
             if "Date" in row:
@@ -139,9 +90,7 @@ def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
                 trend_str = row["Trend"]
 
             gain_percentage = parse_gain_percentage(trend_str)
-            end_date = parse_date_range(date_str)
-            # Treat IPOs as open if the date hasn't passed or if we can't parse the date
-            is_open = (end_date and end_date.date() >= today) or not end_date
+            is_open = True
             has_good_gain = gain_percentage >= MIN_GAIN_PERCENTAGE
 
             if is_open and has_good_gain:
@@ -178,14 +127,26 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
         for idx, row in df.iterrows():
             # Use the EXACT column names from the logs
             stock_name = row.get('IPO Name', 'Unknown')
-            gmp = row.get('IPO GMP', 'N/A')  # <--- This is the exact name!
+            
+            # CRITICAL FIX: Look for the exact column 'IPO GMP'. 
+            # If it is empty or N/A, fall back to 'GMP' or 'N/A'.
+            gmp = row.get('IPO GMP', 'N/A')
+            if not gmp or gmp == 'N/A' or str(gmp).strip() == '':
+                gmp = row.get('GMP', 'N/A')
+            
+            # If the GMP column is just a color (like '🟢'), try to get the numeric value from the row
+            # based on the raw HTML text if needed.
+            if str(gmp) in ['🟢', '🟡', '🔴', 'N/A']:
+                # Let's try to get the full string from the 'IPO GMP' column if it has hidden text
+                gmp = row.get('IPO GMP', row.get('Trend', 'N/A'))
+
             price = row.get('Price Band', 'N/A')
             trend = row.get('Trend', 'N/A')
             date = row.get('Date', 'N/A')
             status = row.get('Status', 'N/A')
 
             message += f"📈 <b>{stock_name}</b>\n"
-            message += f"💰 GMP: {gmp}\n"  # <--- Now it will pull the ₹ values
+            message += f"💰 GMP: {gmp}\n"
             message += f"💵 Price Band: {price}\n"
             message += f"📊 Trend: {trend}\n"
             message += f"📅 Date: {date}\n"
@@ -216,6 +177,7 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
 
     return False
 
+
 async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
     """Scrape IPO GMP data from the website."""
     browser = None
@@ -242,7 +204,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             logger.info("Extracting table data...")
 
-            # Extract table data
+            # Extract table data - UPDATED to grab ALL text including hidden spans
             table_data = await page.evaluate(
                 """
                 () => {
@@ -259,10 +221,17 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                         
                         for (let j = 0; j < cells.length; j++) {
                             const cell = cells[j];
-                            let text = cell.textContent.trim();
+                            // Use innerText to get all visible text, but also check for hidden spans
+                            let text = cell.innerText.trim();
+                            
+                            // Check if there is a hidden span or link with the actual value
+                            const hiddenSpan = cell.querySelector('span');
+                            if (hiddenSpan && hiddenSpan.textContent.trim()) {
+                                text = hiddenSpan.textContent.trim();
+                            }
                             
                             const link = cell.querySelector('a');
-                            if (link) {
+                            if (link && link.textContent.trim()) {
                                 text = link.textContent.trim();
                             }
                             
@@ -303,6 +272,10 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 clean_headers.append(h)
 
             df = pd.DataFrame(rows, columns=clean_headers)
+
+            logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
+            if not df.empty:
+                logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
             # Filter for open IPOs
             filtered_df = filter_open_mainboard_ipos(df)
