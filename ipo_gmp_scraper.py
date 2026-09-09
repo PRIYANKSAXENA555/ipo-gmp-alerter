@@ -177,7 +177,6 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
 
     return False
 
-
 async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
     """Scrape IPO GMP data from the website."""
     browser = None
@@ -204,7 +203,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             logger.info("Extracting table data...")
 
-            # Extract table data - UPDATED to grab ALL text including hidden spans
+            # Extract table data - ADVANCED EXTRACTION
             table_data = await page.evaluate(
                 """
                 () => {
@@ -221,15 +220,24 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                         
                         for (let j = 0; j < cells.length; j++) {
                             const cell = cells[j];
-                            // Use innerText to get all visible text, but also check for hidden spans
-                            let text = cell.innerText.trim();
                             
-                            // Check if there is a hidden span or link with the actual value
-                            const hiddenSpan = cell.querySelector('span');
-                            if (hiddenSpan && hiddenSpan.textContent.trim()) {
-                                text = hiddenSpan.textContent.trim();
+                            // Method 1: Look for a specific hidden span with the data
+                            const hiddenData = cell.querySelector('.gmp-value, .value, .amount');
+                            if (hiddenData) {
+                                rowData.push(hiddenData.textContent.trim());
+                                continue; // Skip the rest of this cell
                             }
                             
+                            // Method 2: Use innerText (which grabs visible text only)
+                            let text = cell.innerText.trim();
+                            
+                            // Method 3: If the cell contains an image, use the alt text
+                            const img = cell.querySelector('img');
+                            if (img && img.alt) {
+                                text = img.alt;
+                            }
+                            
+                            // Method 4: If it's a link, grab the link text
                             const link = cell.querySelector('a');
                             if (link && link.textContent.trim()) {
                                 text = link.textContent.trim();
@@ -272,9 +280,10 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                 clean_headers.append(h)
 
             df = pd.DataFrame(rows, columns=clean_headers)
-
-            logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
+            
+            # Print the FIRST ROW to see if we got the money value
             if not df.empty:
+                logger.info(f"DEBUG - COLUMN NAMES: {list(df.columns)}")
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
             # Filter for open IPOs
