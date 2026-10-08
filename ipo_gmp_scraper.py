@@ -2,40 +2,26 @@
 """
 IPO GMP Scraper - Robust Production Version
 ==========================================
-
-A robust, production-ready scraper for IPO Grey Market Premium data.
-Optimized for reliability and performance.
 """
 
 import asyncio
 import pandas as pd
-from playwright.async_api import (
-    async_playwright,
-    TimeoutError as PlaywrightTimeoutError,
-)
-import json
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 import logging
 import sys
-from datetime import datetime, timedelta
 import re
 import requests
 import os
-from typing import Optional, List, Dict, Any
-from pathlib import Path
+from datetime import datetime
 import time
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("ipo_scraper.log"),
-    ],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
-# Constants
 MIN_GAIN_PERCENTAGE = 0.0
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
@@ -45,76 +31,18 @@ WEBSITE_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
 
 
 def parse_gain_percentage(gain_str: str) -> float:
-    """Parse gain percentage from string like '26.31%'."""
     if not gain_str or gain_str.strip() in ("-", "-%", ""):
         return 0.0
     try:
-        gain_match = re.search(r"(\d+\.?\d*)%", gain_str.strip())
-        if gain_match:
-            return float(gain_match.group(1))
+        match = re.search(r"(\d+\.?\d*)%", gain_str.strip())
+        if match:
+            return float(match.group(1))
     except Exception:
         pass
     return 0.0
 
 
-def filter_open_mainboard_ipos(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter for IPOs that are currently open."""
-    if df.empty:
-        return df
-
-    status_col = None
-    for col in df.columns:
-        if 'status' in col.lower():
-            status_col = col
-            break
-            
-    if status_col:
-        mainboard_df = df[~df[status_col].str.contains('Listed|Closed', case=False, na=False)].copy()
-    else:
-        logger.warning("Could not find 'Status' column. Assuming all are active.")
-        mainboard_df = df.copy()
-
-    if mainboard_df.empty:
-        return mainboard_df
-
-    today = datetime.now().date()
-    open_ipos = []
-
-    for idx, row in mainboard_df.iterrows():
-        try:
-            date_str = ""
-            trend_str = ""
-            if "Date" in row:
-                date_str = row["Date"]
-            if "Trend" in row:
-                trend_str = row["Trend"]
-
-            gain_percentage = parse_gain_percentage(trend_str)
-            is_open = True
-            has_good_gain = gain_percentage >= MIN_GAIN_PERCENTAGE
-
-            if is_open and has_good_gain:
-                open_ipos.append(row)
-        except Exception:
-            continue
-
-    if open_ipos:
-        filtered_df = pd.DataFrame(open_ipos)
-        filtered_df["Gain_Numeric"] = filtered_df["Trend"].apply(parse_gain_percentage)
-        filtered_df = filtered_df.sort_values("Gain_Numeric", ascending=False)
-        filtered_df = filtered_df.drop("Gain_Numeric", axis=1)
-        logger.info(
-            f"Found {len(filtered_df)} currently open IPOs with >= {MIN_GAIN_PERCENTAGE}% gains"
-        )
-    else:
-        logger.info("No currently open IPOs matching criteria found")
-        filtered_df = pd.DataFrame()
-
-    return filtered_df
-
-
 def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
-    """Send IPO data to Telegram group."""
     if not bot_token or not chat_id:
         return False
 
@@ -125,12 +53,8 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            # Use the exact column names found from the debug logs
             stock_name = row.get('IPO Name', 'Unknown')
-            
-            # CRITICAL: The 'IPO GMP' column now contains the actual value (₹200)
             gmp = row.get('IPO GMP', 'N/A')
-            
             price = row.get('Price Band', 'N/A')
             trend = row.get('Trend', 'N/A')
             date = row.get('Date', 'N/A')
@@ -156,9 +80,7 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
                 logger.info("✅ Telegram notification sent successfully!")
                 return True
             else:
-                logger.error(
-                    f"❌ Telegram API error (attempt {attempt + 1}): {response.text}"
-                )
+                logger.error(f"❌ Telegram error (attempt {attempt + 1}): {response.text}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY * (attempt + 1))
         except Exception as e:
@@ -169,8 +91,7 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     return False
 
 
-async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
-    """Scrape IPO GMP data from the website."""
+async def scrape_ipo_gmp_data():
     browser = None
     try:
         logger.info("Starting IPO GMP scraper...")
@@ -179,14 +100,12 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
             browser = await p.chromium.launch(
                 headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-
             page = await browser.new_page()
             page.set_default_timeout(20000)
 
             logger.info("Navigating to IPO GMP page...")
             await page.goto(WEBSITE_URL, wait_until="domcontentloaded")
 
-            # Wait for a table to appear
             try:
                 await page.wait_for_selector("table", timeout=10000)
             except PlaywrightTimeoutError:
@@ -195,163 +114,71 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             logger.info("Extracting table data...")
 
-            # Extract table data - FINDS THE CORRECT TABLE BY HEADER
-            table_data = await page.evaluate(
-                """
-                () => {
-                    const tables = document.querySelectorAll('table');
-                    let targetTable = null;
+            # Get the table that contains "IPO Name"
+            tables = await page.query_selector_all("table")
+            target_table = None
+            for table in tables:
+                headers = await table.query_selector_all("th")
+                for th in headers:
+                    text = await th.inner_text()
+                    if "ipo name" in text.lower():
+                        target_table = table
+                        break
+                if target_table:
+                    break
 
-                    // Find the table that contains the 'IPO Name' header
-                    for (const table of tables) {
-                        const headers = table.querySelectorAll('th');
-                        for (const th of headers) {
-                            if (th.textContent.trim().toLowerCase().includes('ipo name')) {
-                                targetTable = table;
-                                break;
-                            }
-                        }
-                        if (targetTable) break;
-                    }
+            if not target_table:
+                logger.error("Could not find the correct table")
+                return None
 
-                    // Fallback: if no table has 'IPO Name', just grab the biggest table
-                    if (!targetTable) {
-                        let maxRows = 0;
-                        for (const table of tables) {
-                            const rowCount = table.querySelectorAll('tr').length;
-                            if (rowCount > maxRows) {
-                                maxRows = rowCount;
-                                targetTable = table;
-                            }
-                        }
-                    }
-
-                    if (!targetTable) return null;
-
-                    const rows = targetTable.querySelectorAll('tr');
-                    const data = [];
+            # Extract data from the target table
+            rows = await target_table.query_selector_all("tr")
+            data = []
+            for row in rows:
+                cells = await row.query_selector_all("td, th")
+                row_data = []
+                for cell in cells:
+                    # Get all inner text, including hidden spans
+                    text = await cell.inner_text()
                     
-                    for (let i = 0; i < rows.length; i++) {
-                        const row = rows[i];
-                        const cells = row.querySelectorAll('td, th');
-                        const rowData = [];
-                        
-                        for (let j = 0; j < cells.length; j++) {
-                            const cell = cells[j];
-                            let text = cell.innerText.trim();
-                            
-                            // Check for images with meaningful alt text
-                            const img = cell.querySelector('img');
-                            if (img) {
-                                const altText = img.getAttribute('alt') || '';
-                                if (altText && (altText.includes('₹') || altText.includes('%') || altText.match(/\\d/))) {
-                                    text += " " + altText;
-                                }
-                            }
-                            
-                            // Check for hidden values
-                            const hiddenInput = cell.querySelector('input[type="hidden"]');
-                            if (hiddenInput && hiddenInput.value) {
-                                text += " " + hiddenInput.value;
-                            }
-                            
-                            rowData.push(text.trim());
-                        }
-                        
-                        if (rowData.length > 0) {
-                            data.push(rowData);
-                        }
-                    }
+                    # Try to extract the GMP value specifically (look for ₹ or numbers)
+                    # If the text is just a color, try to get the full HTML
+                    if text.strip() in ['🟢', '🟡', '🔴', '']:
+                        html = await cell.inner_html()
+                        # Search for numbers in the HTML
+                        match = re.search(r'(\d+\.?\d*)', html)
+                        if match:
+                            text = "₹" + match.group(1)
                     
-                    return data;
-                }
-                """
-            )
+                    row_data.append(text.strip())
+                if row_data:
+                    data.append(row_data)
 
-            if not table_data or len(table_data) <= 1:
+            if not data or len(data) <= 1:
                 logger.error("No table data extracted")
                 return None
 
-            logger.info(f"Found table with {len(table_data)} rows")
+            logger.info(f"Found table with {len(data)} rows")
 
-            # Convert to DataFrame
-            headers = table_data[0]
-            rows = table_data[1:]
-            
-            clean_headers = []
-            seen_headers = {}
-            for i, h in enumerate(headers):
-                h = h.strip()
-                if not h:
-                    h = f"Column_{i}"
-                if h in seen_headers:
-                    seen_headers[h] += 1
-                    h = f"{h}_{seen_headers[h]}"
-                else:
-                    seen_headers[h] = 0
-                clean_headers.append(h)
+            headers = data[0]
+            rows = data[1:]
+            df = pd.DataFrame(rows, columns=headers)
 
-            df = pd.DataFrame(rows, columns=clean_headers)
-
-            # Log the columns to verify what we got
-            logger.info(f"DEBUG - COLUMNS FOUND: {list(df.columns)}")
+            logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
             if not df.empty:
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
-            # Filter for open IPOs
-            filtered_df = filter_open_mainboard_ipos(df)
+            # Filter
+            if "Status" in df.columns:
+                df = df[~df["Status"].str.contains('Listed|Closed', case=False, na=False)]
 
-            if not filtered_df.empty:
+            if not df.empty:
                 logger.info("\n" + "=" * 80)
-                logger.info("CURRENTLY OPEN IPOs MATCHING CRITERIA")
+                logger.info("CURRENTLY OPEN IPOs")
                 logger.info("=" * 80)
-                logger.info(filtered_df.to_string(index=False))
+                logger.info(df.to_string(index=False))
 
-            return filtered_df
-
-    except Exception as e:
-        logger.error(f"Error occurred during scraping: {e}")
-        return None
-    finally:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass            if not table_data or len(table_data) <= 1:
-                logger.error("No table data extracted")
-                return None
-
-            logger.info(f"Found table with {len(table_data)} rows")
-
-            # Convert to DataFrame
-            headers = table_data[0]
-            rows = table_data[1:]
-            
-            clean_headers = []
-            seen_headers = {}
-            for i, h in enumerate(headers):
-                h = h.strip()
-                if not h:
-                    h = f"Column_{i}"
-                if h in seen_headers:
-                    seen_headers[h] += 1
-                    h = f"{h}_{seen_headers[h]}"
-                else:
-                    seen_headers[h] = 0
-                clean_headers.append(h)
-
-            df = pd.DataFrame(rows, columns=clean_headers)
-
-            # Filter for open IPOs
-            filtered_df = filter_open_mainboard_ipos(df)
-
-            if not filtered_df.empty:
-                logger.info("\n" + "=" * 80)
-                logger.info("CURRENTLY OPEN IPOs MATCHING CRITERIA")
-                logger.info("=" * 80)
-                logger.info(filtered_df.to_string(index=False))
-
-            return filtered_df
+            return df
 
     except Exception as e:
         logger.error(f"Error occurred during scraping: {e}")
@@ -365,42 +192,28 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
 
 async def main():
-    """Main function to run the scraper."""
     start_time = time.time()
-
     try:
         logger.info("IPO GMP Scraper Starting...")
-        logger.info("=" * 50)
-
         df = await scrape_ipo_gmp_data()
 
         if df is not None and not df.empty:
             logger.info(f"Successfully scraped {len(df)} IPO records")
-
-            # Send Telegram notification
             bot_token = os.getenv("BOT_TOKEN")
             chat_id = os.getenv("CHAT_ID")
-
             if bot_token and chat_id:
-                success = send_telegram_alert(df, bot_token, chat_id)
-                if not success:
-                    logger.error("Failed to send Telegram notification")
+                send_telegram_alert(df, bot_token, chat_id)
             else:
-                logger.warning(
-                    "⚠️ Telegram credentials not found. Set BOT_TOKEN and CHAT_ID environment variables."
-                )
-
+                logger.warning("⚠️ Telegram credentials not found.")
             sys.exit(0)
         else:
-            logger.info("No IPO opportunities found or scraping failed")
+            logger.info("No IPO opportunities found")
             sys.exit(0)
-
     except Exception as e:
-        logger.error(f"Fatal error in main: {e}")
+        logger.error(f"Fatal error: {e}")
         sys.exit(1)
     finally:
-        elapsed_time = time.time() - start_time
-        logger.info(f"Scraper completed in {elapsed_time:.2f} seconds")
+        logger.info(f"Scraper completed in {time.time() - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
