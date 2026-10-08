@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IPO GMP Scraper - Debug Version to Find Correct Table
+IPO GMP Scraper - Final Version Mapped to Screenshot
 """
 
 import asyncio
@@ -32,28 +32,44 @@ WEBSITE_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
 def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
+
     current_date = datetime.now().strftime("%B %d, %Y")
+
     if df.empty:
         message = f"📊 No IPO opportunities found today ({current_date})."
     else:
         message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            stock_name = row.get('IPO Name', row.get('Name', 'Unknown'))
-            gmp = row.get('IPO GMP', row.get('GMP', 'N/A'))
-            price = row.get('Price Band', row.get('Price', 'N/A'))
+            # Use exact column names from the screenshot
+            company = row.get('Company', 'Unknown')
+            # Split the company name and status (e.g., "Jio Platforms\nUpcoming")
+            if isinstance(company, str) and '\n' in company:
+                parts = company.split('\n')
+                company = parts[0].strip()
+                status = parts[1].strip() if len(parts) > 1 else 'N/A'
+            else:
+                status = 'N/A'
+
+            gmp = row.get('GMP*', row.get('GMP', 'N/A'))
             trend = row.get('Trend', 'N/A')
+            price = row.get('Price Band', 'N/A')
+            est_gain = row.get('Est. Gain', 'N/A')
             date = row.get('Date', 'N/A')
-            status = row.get('Status', 'N/A')
-            message += f"📈 <b>{stock_name}</b>\n"
+
+            message += f"📈 <b>{company}</b>\n"
             message += f"💰 GMP: {gmp}\n"
             message += f"💵 Price Band: {price}\n"
             message += f"📊 Trend: {trend}\n"
+            message += f"📈 Est. Gain: {est_gain}\n"
             message += f"📅 Date: {date}\n"
             message += f"📌 Status: {status}\n\n"
+
     if len(message) > 4000:
         message = message[:3900] + "\n\n... (truncated)"
+
     url = TELEGRAM_API_URL.format(bot_token)
     data = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, data=data, timeout=REQUEST_TIMEOUT)
@@ -81,8 +97,11 @@ async def scrape_ipo_gmp_data():
             )
             page = await browser.new_page()
             page.set_default_timeout(20000)
+
             logger.info("Navigating to IPO GMP page...")
             await page.goto(WEBSITE_URL, wait_until="domcontentloaded")
+
+            # Wait for any table to appear
             try:
                 await page.wait_for_selector("table", timeout=10000)
             except PlaywrightTimeoutError:
@@ -90,52 +109,51 @@ async def scrape_ipo_gmp_data():
                 return None
 
             logger.info("Extracting table data...")
+            
+            # Find the table containing "Company" and "GMP*"
             tables = await page.query_selector_all("table")
-            logger.info(f"DEBUG - Found {len(tables)} tables on the page")
-
-            data = None
-            for i, table in enumerate(tables):
-                rows = await table.query_selector_all("tr")
-                if not rows:
-                    continue
-                headers = await rows[0].query_selector_all("td, th")
+            target_table = None
+            for table in tables:
+                headers = await table.query_selector_all("th")
                 header_texts = [await h.inner_text() for h in headers]
-                logger.info(f"DEBUG - FOUND TABLE {i}: Headers = {header_texts}")
-                if i == 0 and len(rows) > 1:
-                    first_row_cells = await rows[1].query_selector_all("td, th")
-                    first_row_texts = [await c.inner_text() for c in first_row_cells]
-                    logger.info(f"DEBUG - FIRST ROW of Table {i}: {first_row_texts}")
+                if any("company" in t.lower() for t in header_texts) and any("gmp" in t.lower() for t in header_texts):
+                    target_table = table
+                    break
 
-                # Try to use this table
-                if not data:
-                    table_data = []
-                    for row in rows:
-                        cells = await row.query_selector_all("td, th")
-                        row_data = []
-                        for cell in cells:
-                            text = await cell.inner_text()
-                            row_data.append(text.strip())
-                        if row_data:
-                            table_data.append(row_data)
-                    data = table_data
+            if not target_table:
+                logger.error("Could not find the correct table with Company and GMP headers")
+                return None
+
+            # Extract all rows
+            rows = await target_table.query_selector_all("tr")
+            data = []
+            for row in rows:
+                cells = await row.query_selector_all("td, th")
+                row_data = []
+                for cell in cells:
+                    # Get the full inner text. Because some cells have multiple lines (like Company + Status),
+                    # we keep the newlines and handle them later.
+                    text = await cell.inner_text()
+                    row_data.append(text.strip())
+                if row_data:
+                    data.append(row_data)
 
             if not data or len(data) <= 1:
                 logger.error("No table data extracted")
                 return None
 
-            logger.info(f"Using table with {len(data)} rows")
+            logger.info(f"Found table with {len(data)} rows")
             headers = data[0]
             rows = data[1:]
             df = pd.DataFrame(rows, columns=headers)
+            
             logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
             if not df.empty:
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
-            # Filter out listed/closed
-            for col in df.columns:
-                if 'status' in col.lower():
-                    df = df[~df[col].str.contains('Listed|Closed', case=False, na=False)]
-                    break
+            # Filter out "Listed" or "Closed" if status is in the Company column
+            if 'Company' in df.columns:
+                df = df[~df['Company'].str.contains('Listed|Closed', case=False, na=False)]
 
             return df
 
@@ -155,6 +173,7 @@ async def main():
     try:
         logger.info("IPO GMP Scraper Starting...")
         df = await scrape_ipo_gmp_data()
+
         if df is not None and not df.empty:
             logger.info(f"Successfully scraped {len(df)} IPO records")
             bot_token = os.getenv("BOT_TOKEN")
