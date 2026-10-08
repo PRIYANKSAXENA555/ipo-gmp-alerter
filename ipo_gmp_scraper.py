@@ -186,7 +186,7 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
             logger.info("Navigating to IPO GMP page...")
             await page.goto(WEBSITE_URL, wait_until="domcontentloaded")
 
-            # Wait for table
+            # Wait for a table to appear
             try:
                 await page.wait_for_selector("table", timeout=10000)
             except PlaywrightTimeoutError:
@@ -195,14 +195,40 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
 
             logger.info("Extracting table data...")
 
-            # Extract table data - FINAL FIX: Grab full HTML and extract hidden values
+            # Extract table data - FINDS THE CORRECT TABLE BY HEADER
             table_data = await page.evaluate(
                 """
                 () => {
-                    const table = document.querySelector('table');
-                    if (!table) return null;
-                    
-                    const rows = table.querySelectorAll('tr');
+                    const tables = document.querySelectorAll('table');
+                    let targetTable = null;
+
+                    // Find the table that contains the 'IPO Name' header
+                    for (const table of tables) {
+                        const headers = table.querySelectorAll('th');
+                        for (const th of headers) {
+                            if (th.textContent.trim().toLowerCase().includes('ipo name')) {
+                                targetTable = table;
+                                break;
+                            }
+                        }
+                        if (targetTable) break;
+                    }
+
+                    // Fallback: if no table has 'IPO Name', just grab the biggest table
+                    if (!targetTable) {
+                        let maxRows = 0;
+                        for (const table of tables) {
+                            const rowCount = table.querySelectorAll('tr').length;
+                            if (rowCount > maxRows) {
+                                maxRows = rowCount;
+                                targetTable = table;
+                            }
+                        }
+                    }
+
+                    if (!targetTable) return null;
+
+                    const rows = targetTable.querySelectorAll('tr');
                     const data = [];
                     
                     for (let i = 0; i < rows.length; i++) {
@@ -212,36 +238,21 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
                         
                         for (let j = 0; j < cells.length; j++) {
                             const cell = cells[j];
-                            
-                            // Get the full text content, including hidden elements
                             let text = cell.innerText.trim();
                             
-                            // Check for hidden spans or inputs that contain the real value
-                            const hiddenSpan = cell.querySelector('span[style*="display:none"], span[style*="visibility:hidden"]');
-                            if (hiddenSpan && hiddenSpan.textContent.trim()) {
-                                text += " " + hiddenSpan.textContent.trim();
-                            }
-                            
-                            // Check for input hidden fields
-                            const hiddenInput = cell.querySelector('input[type="hidden"]');
-                            if (hiddenInput && hiddenInput.value) {
-                                text += " " + hiddenInput.value;
-                            }
-                            
-                            // Check for images with meaningful alt text (the GMP amount might be here)
+                            // Check for images with meaningful alt text
                             const img = cell.querySelector('img');
                             if (img) {
                                 const altText = img.getAttribute('alt') || '';
-                                if (altText && (altText.includes('₹') || altText.includes('%') || altText.match(/\\d+/))) {
+                                if (altText && (altText.includes('₹') || altText.includes('%') || altText.match(/\\d/))) {
                                     text += " " + altText;
                                 }
                             }
                             
-                            // Check for data attributes
-                            for (let attr of cell.attributes) {
-                                if (attr.name.startsWith('data-') && attr.value.match(/\\d/)) {
-                                    text += " " + attr.value;
-                                }
+                            // Check for hidden values
+                            const hiddenInput = cell.querySelector('input[type="hidden"]');
+                            if (hiddenInput && hiddenInput.value) {
+                                text += " " + hiddenInput.value;
                             }
                             
                             rowData.push(text.trim());
@@ -258,6 +269,55 @@ async def scrape_ipo_gmp_data() -> Optional[pd.DataFrame]:
             )
 
             if not table_data or len(table_data) <= 1:
+                logger.error("No table data extracted")
+                return None
+
+            logger.info(f"Found table with {len(table_data)} rows")
+
+            # Convert to DataFrame
+            headers = table_data[0]
+            rows = table_data[1:]
+            
+            clean_headers = []
+            seen_headers = {}
+            for i, h in enumerate(headers):
+                h = h.strip()
+                if not h:
+                    h = f"Column_{i}"
+                if h in seen_headers:
+                    seen_headers[h] += 1
+                    h = f"{h}_{seen_headers[h]}"
+                else:
+                    seen_headers[h] = 0
+                clean_headers.append(h)
+
+            df = pd.DataFrame(rows, columns=clean_headers)
+
+            # Log the columns to verify what we got
+            logger.info(f"DEBUG - COLUMNS FOUND: {list(df.columns)}")
+            if not df.empty:
+                logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
+
+            # Filter for open IPOs
+            filtered_df = filter_open_mainboard_ipos(df)
+
+            if not filtered_df.empty:
+                logger.info("\n" + "=" * 80)
+                logger.info("CURRENTLY OPEN IPOs MATCHING CRITERIA")
+                logger.info("=" * 80)
+                logger.info(filtered_df.to_string(index=False))
+
+            return filtered_df
+
+    except Exception as e:
+        logger.error(f"Error occurred during scraping: {e}")
+        return None
+    finally:
+        if browser:
+            try:
+                await browser.close()
+            except Exception:
+                pass            if not table_data or len(table_data) <= 1:
                 logger.error("No table data extracted")
                 return None
 
