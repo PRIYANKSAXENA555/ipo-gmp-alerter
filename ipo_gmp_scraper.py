@@ -96,16 +96,23 @@ async def scrape_ipo_gmp_data():
                 headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
             page = await browser.new_page()
-            page.set_default_timeout(20000)
+            # INCREASED timeout to 60 seconds
+            page.set_default_timeout(60000)
 
             logger.info("Navigating to IPO GMP page...")
-            await page.goto(WEBSITE_URL, wait_until="domcontentloaded")
-
-            # Wait for any table to appear
             try:
-                await page.wait_for_selector("table", timeout=10000)
+                # Try waiting for network to be idle (best for heavy pages)
+                await page.goto(WEBSITE_URL, wait_until="networkidle", timeout=60000)
+            except Exception:
+                # Fallback: if networkidle times out, just load the DOM
+                logger.warning("Network idle timed out, falling back to domcontentloaded")
+                await page.goto(WEBSITE_URL, wait_until="domcontentloaded", timeout=60000)
+
+            # Wait for a table to appear
+            try:
+                await page.wait_for_selector("table", timeout=60000)
             except PlaywrightTimeoutError:
-                logger.error("Table not found on page")
+                logger.error("Table not found on page after 60s")
                 return None
 
             logger.info("Extracting table data...")
@@ -131,8 +138,6 @@ async def scrape_ipo_gmp_data():
                 cells = await row.query_selector_all("td, th")
                 row_data = []
                 for cell in cells:
-                    # Get the full inner text. Because some cells have multiple lines (like Company + Status),
-                    # we keep the newlines and handle them later.
                     text = await cell.inner_text()
                     row_data.append(text.strip())
                 if row_data:
@@ -151,7 +156,7 @@ async def scrape_ipo_gmp_data():
             if not df.empty:
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
-            # Filter out "Listed" or "Closed" if status is in the Company column
+            # Filter out "Listed" or "Closed"
             if 'Company' in df.columns:
                 df = df[~df['Company'].str.contains('Listed|Closed', case=False, na=False)]
 
@@ -166,7 +171,6 @@ async def scrape_ipo_gmp_data():
                 await browser.close()
             except Exception:
                 pass
-
 
 async def main():
     start_time = time.time()
