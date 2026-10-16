@@ -92,27 +92,45 @@ async def scrape_ipo_gmp_data():
     try:
         logger.info("Starting IPO GMP scraper...")
         async with async_playwright() as p:
+            # LAUNCH WITH REAL BROWSER SETTINGS TO BYPASS BOT DETECTION
             browser = await p.chromium.launch(
-                headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled", # Hides the "bot" flag
+                    "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ]
             )
-            page = await browser.new_page()
-            # INCREASED timeout to 60 seconds
+            
+            # Create context with a real user agent
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
+            page = await context.new_page()
             page.set_default_timeout(60000)
 
             logger.info("Navigating to IPO GMP page...")
             try:
-                # Try waiting for network to be idle (best for heavy pages)
+                # Wait for network to settle
                 await page.goto(WEBSITE_URL, wait_until="networkidle", timeout=60000)
             except Exception:
-                # Fallback: if networkidle times out, just load the DOM
-                logger.warning("Network idle timed out, falling back to domcontentloaded")
+                logger.warning("Network idle timed out, waiting for DOM")
                 await page.goto(WEBSITE_URL, wait_until="domcontentloaded", timeout=60000)
 
-            # Wait for a table to appear
+            # Wait for the specific "GMP" column header to appear
+            logger.info("Waiting for the GMP table to load...")
             try:
-                await page.wait_for_selector("table", timeout=60000)
+                # Wait for any element that contains the text "GMP*"
+                await page.wait_for_function(
+                    "() => document.body.innerText.includes('GMP*')", 
+                    timeout=60000
+                )
+                # Once the text is there, wait a couple more seconds for the table to render
+                await page.wait_for_timeout(3000)
             except PlaywrightTimeoutError:
-                logger.error("Table not found on page after 60s")
+                logger.error("The GMP table text never appeared on the page")
                 return None
 
             logger.info("Extracting table data...")
