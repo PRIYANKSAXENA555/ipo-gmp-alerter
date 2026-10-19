@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IPO GMP Scraper - Final Version Mapped to Screenshot
+IPO GMP Scraper - InvestorGain Version
 """
 
 import asyncio
@@ -8,7 +8,6 @@ import pandas as pd
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 import logging
 import sys
-import re
 import requests
 import os
 from datetime import datetime
@@ -21,12 +20,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MIN_GAIN_PERCENTAGE = 0.0
+# Telegram Settings
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 TELEGRAM_API_URL = "https://api.telegram.org/bot{}/sendMessage"
-WEBSITE_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
+
+# New Website URL
+WEBSITE_URL = "https://www.investorgain.com/report/ipo-gmp-live/331/"
 
 
 def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
@@ -38,31 +39,18 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
     if df.empty:
         message = f"📊 No IPO opportunities found today ({current_date})."
     else:
-        message = f"🚀 <b>Daily IPO Opportunities Found!</b>\n📅 {current_date}\n\n"
+        message = f"🚀 <b>Daily IPO GMP (InvestorGain)</b>\n📅 {current_date}\n\n"
         for idx, row in df.iterrows():
-            # Use exact column names from the screenshot
-            company = row.get('Company', 'Unknown')
-            # Split the company name and status (e.g., "Jio Platforms\nUpcoming")
-            if isinstance(company, str) and '\n' in company:
-                parts = company.split('\n')
-                company = parts[0].strip()
-                status = parts[1].strip() if len(parts) > 1 else 'N/A'
-            else:
-                status = 'N/A'
+            name = row.get('Name', 'Unknown')
+            gmp = row.get('GMP', 'N/A')
+            price = row.get('Price (₹)', 'N/A')
+            open_date = row.get('Open', 'N/A')
+            close_date = row.get('Close', 'N/A')
 
-            gmp = row.get('GMP*', row.get('GMP', 'N/A'))
-            trend = row.get('Trend', 'N/A')
-            price = row.get('Price Band', 'N/A')
-            est_gain = row.get('Est. Gain', 'N/A')
-            date = row.get('Date', 'N/A')
-
-            message += f"📈 <b>{company}</b>\n"
+            message += f"📈 <b>{name}</b>\n"
             message += f"💰 GMP: {gmp}\n"
-            message += f"💵 Price Band: {price}\n"
-            message += f"📊 Trend: {trend}\n"
-            message += f"📈 Est. Gain: {est_gain}\n"
-            message += f"📅 Date: {date}\n"
-            message += f"📌 Status: {status}\n\n"
+            message += f"💵 Price: {price}\n"
+            message += f"📅 Open: {open_date} | Close: {close_date}\n\n"
 
     if len(message) > 4000:
         message = message[:3900] + "\n\n... (truncated)"
@@ -77,11 +65,11 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
                 logger.info("✅ Telegram notification sent successfully!")
                 return True
             else:
-                logger.error(f"❌ Telegram error (attempt {attempt + 1}): {response.text}")
+                logger.error(f"❌ Telegram error: {response.text}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY * (attempt + 1))
         except Exception as e:
-            logger.error(f"❌ Telegram request error (attempt {attempt + 1}): {e}")
+            logger.error(f"❌ Request error: {e}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY * (attempt + 1))
     return False
@@ -90,66 +78,44 @@ def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
 async def scrape_ipo_gmp_data():
     browser = None
     try:
-        logger.info("Starting IPO GMP scraper...")
+        logger.info("Starting IPO GMP scraper (InvestorGain)...")
         async with async_playwright() as p:
-            # LAUNCH WITH REAL BROWSER SETTINGS TO BYPASS BOT DETECTION
             browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled", # Hides the "bot" flag
-                    "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                ]
+                headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-            
-            # Create context with a real user agent
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080}
-            )
-            page = await context.new_page()
+            page = await browser.new_page()
             page.set_default_timeout(60000)
 
-            logger.info("Navigating to IPO GMP page...")
-            try:
-                # Wait for network to settle
-                await page.goto(WEBSITE_URL, wait_until="networkidle", timeout=60000)
-            except Exception:
-                logger.warning("Network idle timed out, waiting for DOM")
-                await page.goto(WEBSITE_URL, wait_until="domcontentloaded", timeout=60000)
+            logger.info("Navigating to InvestorGain...")
+            await page.goto(WEBSITE_URL, wait_until="domcontentloaded", timeout=60000)
 
-            # Wait for the specific "GMP" column header to appear
-            logger.info("Waiting for the GMP table to load...")
+            # Wait for the specific table to load
+            logger.info("Waiting for table to load...")
             try:
-                # Wait for any element that contains the text "GMP*"
-                await page.wait_for_function(
-                    "() => document.body.innerText.includes('GMP*')", 
-                    timeout=60000
-                )
-                # Once the text is there, wait a couple more seconds for the table to render
-                await page.wait_for_timeout(3000)
+                # Wait for any table that has "GMP" and "Price" headers
+                await page.wait_for_selector("table", timeout=30000)
+                await page.wait_for_timeout(3000) # Give it a few extra seconds to render
             except PlaywrightTimeoutError:
-                logger.error("The GMP table text never appeared on the page")
+                logger.error("Table not found on page")
                 return None
 
             logger.info("Extracting table data...")
             
-            # Find the table containing "Company" and "GMP*"
+            # Find the correct table
             tables = await page.query_selector_all("table")
             target_table = None
             for table in tables:
                 headers = await table.query_selector_all("th")
                 header_texts = [await h.inner_text() for h in headers]
-                if any("company" in t.lower() for t in header_texts) and any("gmp" in t.lower() for t in header_texts):
+                if any("gmp" in t.lower() for t in header_texts) and any("price" in t.lower() for t in header_texts):
                     target_table = table
                     break
 
             if not target_table:
-                logger.error("Could not find the correct table with Company and GMP headers")
+                logger.error("Could not find the GMP table")
                 return None
 
-            # Extract all rows
+            # Extract rows
             rows = await target_table.query_selector_all("tr")
             data = []
             for row in rows:
@@ -157,26 +123,42 @@ async def scrape_ipo_gmp_data():
                 row_data = []
                 for cell in cells:
                     text = await cell.inner_text()
+                    # Clean up newlines inside the cell
+                    text = " ".join(text.split())
                     row_data.append(text.strip())
                 if row_data:
                     data.append(row_data)
 
             if not data or len(data) <= 1:
-                logger.error("No table data extracted")
+                logger.error("No data extracted")
                 return None
 
-            logger.info(f"Found table with {len(data)} rows")
+            # Clean headers (often there are duplicate headers like "Name" due to nested tables)
             headers = data[0]
-            rows = data[1:]
-            df = pd.DataFrame(rows, columns=headers)
+            clean_headers = []
+            for i, h in enumerate(headers):
+                # If a header is just "Name" or "GMP", add index to differentiate
+                if h in clean_headers:
+                    clean_headers.append(f"{h}_{i}")
+                else:
+                    clean_headers.append(h)
+
+            # Create DataFrame
+            df = pd.DataFrame(data[1:], columns=clean_headers)
             
+            # Log the columns so we can see what we have
             logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
             if not df.empty:
                 logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
 
-            # Filter out "Listed" or "Closed"
-            if 'Company' in df.columns:
-                df = df[~df['Company'].str.contains('Listed|Closed', case=False, na=False)]
+            # Filter out "Listed" or "Closed" (usually these are at the bottom)
+            # In InvestorGain, the "Anchor" column has ❌ for closed IPOs, so we can filter on that.
+            if 'Anchor' in df.columns:
+                df = df[df['Anchor'].str.contains('✅', na=False)]
+            
+            # We only want the current/upcoming IPOs (usually the first 10-15 rows)
+            # We can grab the first 15 rows to keep the message concise
+            df = df.head(15)
 
             return df
 
@@ -189,6 +171,7 @@ async def scrape_ipo_gmp_data():
                 await browser.close()
             except Exception:
                 pass
+
 
 async def main():
     start_time = time.time()
