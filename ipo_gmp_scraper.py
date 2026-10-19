@@ -1,3 +1,33 @@
+#!/usr/bin/env python3
+"""
+IPO GMP Scraper - InvestorGain Final Complete Version
+"""
+
+import asyncio
+import pandas as pd
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import logging
+import sys
+import requests
+import os
+from datetime import datetime
+import time
+import re
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT = 30
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+TELEGRAM_API_URL = "https://api.telegram.org/bot{}/sendMessage"
+WEBSITE_URL = "https://www.investorgain.com/report/ipo-gmp-live/331/"
+
+
 def send_telegram_alert(ipos: list, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
@@ -157,3 +187,32 @@ async def scrape_ipo_gmp_data():
                 await browser.close()
             except Exception:
                 pass
+
+
+async def main():
+    start_time = time.time()
+    try:
+        logger.info("IPO GMP Scraper Starting...")
+        ipos = await scrape_ipo_gmp_data()
+
+        if ipos:
+            logger.info(f"Successfully scraped {len(ipos)} IPO records")
+            bot_token = os.getenv("BOT_TOKEN")
+            chat_id = os.getenv("CHAT_ID")
+            if bot_token and chat_id:
+                send_telegram_alert(ipos, bot_token, chat_id)
+            else:
+                logger.warning("⚠️ Telegram credentials not found.")
+            sys.exit(0)
+        else:
+            logger.info("No IPO opportunities found")
+            sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
+    finally:
+        logger.info(f"Scraper completed in {time.time() - start_time:.2f} seconds")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
