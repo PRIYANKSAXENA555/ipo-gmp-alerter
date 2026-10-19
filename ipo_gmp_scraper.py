@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IPO GMP Scraper - InvestorGain Version
+IPO GMP Scraper - InvestorGain Final Version
 """
 
 import asyncio
@@ -20,37 +20,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Telegram Settings
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 TELEGRAM_API_URL = "https://api.telegram.org/bot{}/sendMessage"
-
-# New Website URL
 WEBSITE_URL = "https://www.investorgain.com/report/ipo-gmp-live/331/"
 
 
-def send_telegram_alert(df: pd.DataFrame, bot_token: str, chat_id: str) -> bool:
+def send_telegram_alert(ipos: list, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
 
     current_date = datetime.now().strftime("%B %d, %Y")
 
-    if df.empty:
+    if not ipos:
         message = f"📊 No IPO opportunities found today ({current_date})."
     else:
         message = f"🚀 <b>Daily IPO GMP (InvestorGain)</b>\n📅 {current_date}\n\n"
-        for idx, row in df.iterrows():
-            name = row.get('Name', 'Unknown')
-            gmp = row.get('GMP', 'N/A')
-            price = row.get('Price (₹)', 'N/A')
-            open_date = row.get('Open', 'N/A')
-            close_date = row.get('Close', 'N/A')
-
-            message += f"📈 <b>{name}</b>\n"
-            message += f"💰 GMP: {gmp}\n"
-            message += f"💵 Price: {price}\n"
-            message += f"📅 Open: {open_date} | Close: {close_date}\n\n"
+        for ipo in ipos:
+            message += f"📈 <b>{ipo['name']}</b>\n"
+            message += f"💰 GMP: {ipo['gmp']}\n"
+            message += f"💵 Price: {ipo['price']}\n"
+            message += f"📅 Open: {ipo['open']} | Close: {ipo['close']}\n\n"
 
     if len(message) > 4000:
         message = message[:3900] + "\n\n... (truncated)"
@@ -89,19 +80,16 @@ async def scrape_ipo_gmp_data():
             logger.info("Navigating to InvestorGain...")
             await page.goto(WEBSITE_URL, wait_until="domcontentloaded", timeout=60000)
 
-            # Wait for the specific table to load
             logger.info("Waiting for table to load...")
             try:
-                # Wait for any table that has "GMP" and "Price" headers
                 await page.wait_for_selector("table", timeout=30000)
-                await page.wait_for_timeout(3000) # Give it a few extra seconds to render
+                await page.wait_for_timeout(3000)
             except PlaywrightTimeoutError:
                 logger.error("Table not found on page")
-                return None
+                return []
 
             logger.info("Extracting table data...")
             
-            # Find the correct table
             tables = await page.query_selector_all("table")
             target_table = None
             for table in tables:
@@ -113,58 +101,66 @@ async def scrape_ipo_gmp_data():
 
             if not target_table:
                 logger.error("Could not find the GMP table")
-                return None
+                return []
 
-            # Extract rows
             rows = await target_table.query_selector_all("tr")
-            data = []
+            
+            # We will store the IPOs in a list of dictionaries
+            ipos = []
+            
+            # Based on the URL structure: 
+            # Col 0: Name (Company + Status)
+            # Col 1: GMP (Price + %)
+            # Col 2: Rating
+            # Col 3: Sub
+            # Col 4: Price (₹)
+            # Col 5: IPO Size
+            # Col 6: Lot
+            # Col 7: Open Date
+            # Col 8: Close Date
+            # Col 9: BoA Dt
+            # Col 10: Listing
+            # Col 11: Updated-On
+            # Col 12: Anchor (✅ or ❌)
+
             for row in rows:
-                cells = await row.query_selector_all("td, th")
-                row_data = []
+                cells = await row.query_selector_all("td")
+                if len(cells) < 10:
+                    continue # Skip header rows or empty rows
+                
+                cell_texts = []
                 for cell in cells:
                     text = await cell.inner_text()
-                    # Clean up newlines inside the cell
+                    # Clean up newlines and extra spaces
                     text = " ".join(text.split())
-                    row_data.append(text.strip())
-                if row_data:
-                    data.append(row_data)
+                    cell_texts.append(text.strip())
 
-            if not data or len(data) <= 1:
-                logger.error("No data extracted")
-                return None
+                # Extract by position based on the table layout
+                name = cell_texts[0] if len(cell_texts) > 0 else "Unknown"
+                gmp = cell_texts[1] if len(cell_texts) > 1 else "N/A"
+                price = cell_texts[4] if len(cell_texts) > 4 else "N/A"
+                open_date = cell_texts[7] if len(cell_texts) > 7 else "N/A"
+                close_date = cell_texts[8] if len(cell_texts) > 8 else "N/A"
 
-            # Clean headers (often there are duplicate headers like "Name" due to nested tables)
-            headers = data[0]
-            clean_headers = []
-            for i, h in enumerate(headers):
-                # If a header is just "Name" or "GMP", add index to differentiate
-                if h in clean_headers:
-                    clean_headers.append(f"{h}_{i}")
-                else:
-                    clean_headers.append(h)
+                # Filter: Only include rows that have a GMP value and are NOT closed (Anchor is ✅)
+                anchor = cell_texts[-1] if len(cell_texts) > 0 else ""
+                if "✅" in anchor and gmp != "₹-- (0.00%)":
+                    ipos.append({
+                        "name": name,
+                        "gmp": gmp,
+                        "price": price,
+                        "open": open_date,
+                        "close": close_date
+                    })
 
-            # Create DataFrame
-            df = pd.DataFrame(data[1:], columns=clean_headers)
+            logger.info(f"Found {len(ipos)} active IPOs")
             
-            # Log the columns so we can see what we have
-            logger.info(f"DEBUG - COLUMNS: {list(df.columns)}")
-            if not df.empty:
-                logger.info(f"DEBUG - FIRST ROW: {df.iloc[0].to_dict()}")
-
-            # Filter out "Listed" or "Closed" (usually these are at the bottom)
-            # In InvestorGain, the "Anchor" column has ❌ for closed IPOs, so we can filter on that.
-            if 'Anchor' in df.columns:
-                df = df[df['Anchor'].str.contains('✅', na=False)]
-            
-            # We only want the current/upcoming IPOs (usually the first 10-15 rows)
-            # We can grab the first 15 rows to keep the message concise
-            df = df.head(15)
-
-            return df
+            # Return top 10 to keep the message manageable
+            return ipos[:10]
 
     except Exception as e:
         logger.error(f"Error occurred during scraping: {e}")
-        return None
+        return []
     finally:
         if browser:
             try:
@@ -177,14 +173,14 @@ async def main():
     start_time = time.time()
     try:
         logger.info("IPO GMP Scraper Starting...")
-        df = await scrape_ipo_gmp_data()
+        ipos = await scrape_ipo_gmp_data()
 
-        if df is not None and not df.empty:
-            logger.info(f"Successfully scraped {len(df)} IPO records")
+        if ipos:
+            logger.info(f"Successfully scraped {len(ipos)} IPO records")
             bot_token = os.getenv("BOT_TOKEN")
             chat_id = os.getenv("CHAT_ID")
             if bot_token and chat_id:
-                send_telegram_alert(df, bot_token, chat_id)
+                send_telegram_alert(ipos, bot_token, chat_id)
             else:
                 logger.warning("⚠️ Telegram credentials not found.")
             sys.exit(0)
