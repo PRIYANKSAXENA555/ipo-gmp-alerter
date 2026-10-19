@@ -12,6 +12,7 @@ import requests
 import os
 from datetime import datetime
 import time
+import re
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,10 +37,17 @@ def send_telegram_alert(ipos: list, bot_token: str, chat_id: str) -> bool:
     if not ipos:
         message = f"📊 No IPO opportunities found today ({current_date})."
     else:
-        message = f"🚀 <b>Daily IPO GMP (InvestorGain)</b>\n📅 {current_date}\n\n"
+        message = f"🚀 <b>Daily IPO GMP (Sorted by Close Date)</b>\n📅 {current_date}\n\n"
         for ipo in ipos:
-            message += f"📈 <b>{ipo['name']}</b>\n"
-            message += f"💰 GMP: {ipo['gmp']}\n"
+            # Add color dot based on GMP percentage
+            gmp_percent = ipo['gmp_percent']
+            if gmp_percent >= 20.0:
+                color = "🟢"
+            else:
+                color = "🔴"
+                
+            message += f"{color} <b>{ipo['name']}</b>\n"
+            message += f"💰 GMP: {ipo['gmp']} ({gmp_percent}%)\n"
             message += f"💵 Price: {ipo['price']}\n"
             message += f"📅 Open: {ipo['open']} | Close: {ipo['close']}\n\n"
 
@@ -104,59 +112,72 @@ async def scrape_ipo_gmp_data():
                 return []
 
             rows = await target_table.query_selector_all("tr")
-            
-            # We will store the IPOs in a list of dictionaries
             ipos = []
-            
-            # Based on the URL structure: 
-            # Col 0: Name (Company + Status)
-            # Col 1: GMP (Price + %)
-            # Col 2: Rating
-            # Col 3: Sub
-            # Col 4: Price (₹)
-            # Col 5: IPO Size
-            # Col 6: Lot
-            # Col 7: Open Date
-            # Col 8: Close Date
-            # Col 9: BoA Dt
-            # Col 10: Listing
-            # Col 11: Updated-On
-            # Col 12: Anchor (✅ or ❌)
 
             for row in rows:
                 cells = await row.query_selector_all("td")
                 if len(cells) < 10:
-                    continue # Skip header rows or empty rows
+                    continue
                 
                 cell_texts = []
                 for cell in cells:
                     text = await cell.inner_text()
-                    # Clean up newlines and extra spaces
                     text = " ".join(text.split())
                     cell_texts.append(text.strip())
 
-                # Extract by position based on the table layout
-                name = cell_texts[0] if len(cell_texts) > 0 else "Unknown"
-                gmp = cell_texts[1] if len(cell_texts) > 1 else "N/A"
+                name_raw = cell_texts[0] if len(cell_texts) > 0 else "Unknown"
+                gmp_raw = cell_texts[1] if len(cell_texts) > 1 else "₹-- (0.00%)"
                 price = cell_texts[4] if len(cell_texts) > 4 else "N/A"
                 open_date = cell_texts[7] if len(cell_texts) > 7 else "N/A"
                 close_date = cell_texts[8] if len(cell_texts) > 8 else "N/A"
 
-                # Filter: Only include rows that have a GMP value and are NOT closed (Anchor is ✅)
-                anchor = cell_texts[-1] if len(cell_texts) > 0 else ""
-                if "✅" in anchor and gmp != "₹-- (0.00%)":
-                    ipos.append({
-                        "name": name,
-                        "gmp": gmp,
-                        "price": price,
-                        "open": open_date,
-                        "close": close_date
-                    })
+                # Clean up dates (remove extra GMP text like "15-Oct GMP: 500")
+                open_date = re.sub(r'\s*GMP:.*', '', open_date)
+                close_date = re.sub(r'\s*GMP:.*', '', close_date)
 
-            logger.info(f"Found {len(ipos)} active IPOs")
+                # Filter closed IPOs and empty GMPs
+                anchor = cell_texts[-1] if len(cell_texts) > 0 else ""
+                if "✅" not in anchor or gmp_raw == "₹-- (0.00%)":
+                    continue
+
+                # Extract name and remove the trailing U, O, CT, C tags for cleaner display
+                name = re.sub(r'\s+(IPO|BSE|NSE|SME)?[UOCTC]+$', '', name_raw).strip()
+                # If the regex was too aggressive, fallback to the raw name
+                if not name:
+                    name = name_raw
+
+                # Parse GMP percentage (e.g., "₹252 (22.52%)" -> 22.52)
+                gmp_percent = 0.0
+                match = re.search(r'\((\d+\.?\d*)%\)', gmp_raw)
+                if match:
+                    gmp_percent = float(match.group(1))
+                
+                # Clean GMP amount (e.g., "₹252 (22.52%) 148 ↓ / 252 ↑" -> "₹252")
+                gmp_amount = gmp_raw.split(' ')[0]
+
+                # Filter out bad dates to allow sorting
+                sortable_close = close_date if close_date != "N/A" else "9999"
+                # Convert "27-Oct" to a sortable date format "2026-10-27"
+                try:
+                    parsed_close = datetime.strptime(sortable_close + " 2026", "%d-%b %Y")
+                except:
+                    parsed_close = datetime(2099, 12, 31)
+
+                ipos.append({
+                    "name": name,
+                    "gmp": gmp_amount,
+                    "gmp_percent": gmp_percent,
+                    "price": price,
+                    "open": open_date,
+                    "close": close_date,
+                    "sort_date": parsed_close
+                })
+
+            # Sort the IPOs by the closing date
+            ipos.sort(key=lambda x: x['sort_date'])
             
-            # Return top 10 to keep the message manageable
-            return ipos[:10]
+            logger.info(f"Found {len(ipos)} active IPOs")
+            return ipos[:15] # Return top 15 for the message
 
     except Exception as e:
         logger.error(f"Error occurred during scraping: {e}")
