@@ -1,33 +1,3 @@
-#!/usr/bin/env python3
-"""
-IPO GMP Scraper - InvestorGain Final Version
-"""
-
-import asyncio
-import pandas as pd
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-import logging
-import sys
-import requests
-import os
-from datetime import datetime
-import time
-import re
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT = 30
-MAX_RETRIES = 3
-RETRY_DELAY = 2
-TELEGRAM_API_URL = "https://api.telegram.org/bot{}/sendMessage"
-WEBSITE_URL = "https://www.investorgain.com/report/ipo-gmp-live/331/"
-
-
 def send_telegram_alert(ipos: list, bot_token: str, chat_id: str) -> bool:
     if not bot_token or not chat_id:
         return False
@@ -113,6 +83,7 @@ async def scrape_ipo_gmp_data():
 
             rows = await target_table.query_selector_all("tr")
             ipos = []
+            today = datetime.now()
 
             for row in rows:
                 cells = await row.query_selector_all("td")
@@ -135,33 +106,31 @@ async def scrape_ipo_gmp_data():
                 open_date = re.sub(r'\s*GMP:.*', '', open_date)
                 close_date = re.sub(r'\s*GMP:.*', '', close_date)
 
-                # Filter closed IPOs and empty GMPs
                 anchor = cell_texts[-1] if len(cell_texts) > 0 else ""
                 if "✅" not in anchor or gmp_raw == "₹-- (0.00%)":
                     continue
 
-                # Extract name and remove the trailing U, O, CT, C tags for cleaner display
-                name = re.sub(r'\s+(IPO|BSE|NSE|SME)?[UOCTC]+$', '', name_raw).strip()
-                # If the regex was too aggressive, fallback to the raw name
-                if not name:
-                    name = name_raw
+                # CLEAN THE NAME: Remove the "@118.00 (2.61%)" part
+                name = re.sub(r'@.*$', '', name_raw).strip()
+                name = re.sub(r'\s+(IPO|BSE|NSE|SME)?[UOCTC]+$', '', name).strip()
 
-                # Parse GMP percentage (e.g., "₹252 (22.52%)" -> 22.52)
+                # Parse GMP percentage
                 gmp_percent = 0.0
                 match = re.search(r'\((\d+\.?\d*)%\)', gmp_raw)
                 if match:
                     gmp_percent = float(match.group(1))
                 
-                # Clean GMP amount (e.g., "₹252 (22.52%) 148 ↓ / 252 ↑" -> "₹252")
                 gmp_amount = gmp_raw.split(' ')[0]
 
-                # Filter out bad dates to allow sorting
-                sortable_close = close_date if close_date != "N/A" else "9999"
-                # Convert "27-Oct" to a sortable date format "2026-10-27"
+                # Parse dates for filtering and sorting
                 try:
-                    parsed_close = datetime.strptime(sortable_close + " 2026", "%d-%b %Y")
+                    parsed_close = datetime.strptime(close_date + " 2026", "%d-%b %Y")
                 except:
                     parsed_close = datetime(2099, 12, 31)
+
+                # FILTER: Only include IPOs that haven't closed yet (or close today)
+                if parsed_close.date() < today.date():
+                    continue
 
                 ipos.append({
                     "name": name,
@@ -177,7 +146,7 @@ async def scrape_ipo_gmp_data():
             ipos.sort(key=lambda x: x['sort_date'])
             
             logger.info(f"Found {len(ipos)} active IPOs")
-            return ipos[:15] # Return top 15 for the message
+            return ipos[:15]
 
     except Exception as e:
         logger.error(f"Error occurred during scraping: {e}")
@@ -188,32 +157,3 @@ async def scrape_ipo_gmp_data():
                 await browser.close()
             except Exception:
                 pass
-
-
-async def main():
-    start_time = time.time()
-    try:
-        logger.info("IPO GMP Scraper Starting...")
-        ipos = await scrape_ipo_gmp_data()
-
-        if ipos:
-            logger.info(f"Successfully scraped {len(ipos)} IPO records")
-            bot_token = os.getenv("BOT_TOKEN")
-            chat_id = os.getenv("CHAT_ID")
-            if bot_token and chat_id:
-                send_telegram_alert(ipos, bot_token, chat_id)
-            else:
-                logger.warning("⚠️ Telegram credentials not found.")
-            sys.exit(0)
-        else:
-            logger.info("No IPO opportunities found")
-            sys.exit(0)
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        sys.exit(1)
-    finally:
-        logger.info(f"Scraper completed in {time.time() - start_time:.2f} seconds")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
